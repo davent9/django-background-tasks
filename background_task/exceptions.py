@@ -9,7 +9,7 @@ class BackgroundTaskError(Exception):
 
 
 class InvalidTaskError(BackgroundTaskError):
-	"""
-	The task will not be rescheduled if it fails with this error
-	"""
-	pass
+    """
+    The task will not be rescheduled if it fails with this error
+    """
+    pass

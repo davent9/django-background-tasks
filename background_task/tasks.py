@@ -4,13 +4,14 @@ from __future__ import unicode_literals
 from datetime import datetime, timedelta
 from importlib import import_module
 from multiprocessing.pool import ThreadPool
+from concurrent.futures import ProcessPoolExecutor
 import logging
 import os
 import sys
 
 from django.db.utils import OperationalError
 from django.utils import timezone
-from django.utils.six import python_2_unicode_compatible
+from six import python_2_unicode_compatible
 
 from background_task.exceptions import BackgroundTaskError
 from background_task.models import Task
@@ -61,7 +62,40 @@ def bg_runner(proxy_task, task=None, *args, **kwargs):
     signals.task_finished.send(Task)
 
 
-class PoolRunner:
+def process_runner(task):
+    signals.task_started.send(Task)
+
+    if task is None or not isinstance(task, Task):
+        raise BackgroundTaskError("Task is None or not a Task instance, can't execute!")
+    if task.task_name not in tasks._tasks:
+        raise BackgroundTaskError("Task name not found in available tasks, can't execute!")
+
+    try:
+        func = getattr(tasks._tasks[task.task_name], 'task_function', None)
+        args, kwargs = task.params()
+        if func is None:
+            raise BackgroundTaskError("Function is None, can't execute!")
+        logger.info('*** Running process_runner {} {} {}'.format(func, args, kwargs))
+        func(*args, **kwargs)
+
+        # task done, so can delete it
+        task.increment_attempts()
+        completed = task.create_completed_task()
+        signals.task_successful.send(sender=task.__class__, task_id=task.id, completed_task=completed)
+        task.create_repetition()
+        task.delete()
+        logger.info('Ran task and deleting %s', task)
+    except Exception as ex:
+        t, e, traceback = sys.exc_info()
+        if task:
+            logger.error('Rescheduling %s', task, exc_info=(t, e, traceback))
+            signals.task_error.send(sender=ex.__class__, task=task)
+            task.reschedule(t, e, traceback)
+        del traceback
+    signals.task_finished.send(Task)
+
+
+class ThreadPoolRunner:
     def __init__(self, bg_runner, num_processes):
         self._bg_runner = bg_runner
         self._num_processes = num_processes
@@ -80,21 +114,64 @@ class PoolRunner:
     __call__ = run
 
 
+class ProcessPoolRunner:
+    def __init__(self, num_processes):
+        self._num_processes = num_processes
+
+    _pool_instance = None
+
+    @property
+    def _pool(self):
+        if not self._pool_instance:
+            self._pool_instance = ProcessPoolExecutor(max_workers=self._num_processes)
+        return self._pool_instance
+
+    def run(self, proxy_task, task=None, *args, **kwargs):
+        self._pool.submit(process_runner, task)
+
+    __call__ = run
+
+
+class ASyncPoolRunnerFactory(object):
+    @staticmethod
+    def get_factory(runner_type):
+        if runner_type == 'process':
+            return ProcessPoolFactory()
+        elif runner_type == 'thread':
+            return ThreadPoolFactory()
+        else:
+            return ThreadPoolFactory()
+
+    def create_runner(self, bg_runner, num_processes):
+        raise NotImplementedError()
+
+
+class ThreadPoolFactory(ASyncPoolRunnerFactory):
+    def create_runner(self, bg_runner, num_processes):
+        return ThreadPoolRunner(bg_runner, num_processes)
+
+
+class ProcessPoolFactory(ASyncPoolRunnerFactory):
+    def create_runner(self, bg_runner, num_processes):
+        return ProcessPoolRunner(num_processes)
+
+
 class Tasks(object):
     def __init__(self):
         self._tasks = {}
         self._runner = DBTaskRunner()
         self._task_proxy_class = TaskProxy
         self._bg_runner = bg_runner
-        self._pool_runner = PoolRunner(bg_runner, app_settings.BACKGROUND_TASK_ASYNC_THREADS)
+        pool_factory = ASyncPoolRunnerFactory.get_factory(app_settings.BACKGROUND_ASYNC_POOL_TYPE)
+        self._pool_runner = pool_factory.create_runner(bg_runner, app_settings.BACKGROUND_TASK_ASYNC_THREADS)
 
     def background(self, name=None, schedule=None, queue=None,
                    remove_existing_tasks=False):
-        '''
+        """
         decorator to turn a regular function into
         something that gets run asynchronously in
         the background, at a later time
-        '''
+        """
 
         # see if used as simple decorator
         # where first arg is the function to be decorated
@@ -193,22 +270,19 @@ class TaskSchedule(object):
     def action(self):
         return self._action or TaskSchedule.SCHEDULE
 
-
     def __repr__(self):
         return 'TaskSchedule(run_at=%s, priority=%s)' % (self._run_at,
                                                          self._priority)
 
     def __eq__(self, other):
-        return self._run_at == other._run_at \
-           and self._priority == other._priority \
-           and self._action == other._action
+        return self._run_at == other._run_at and self._priority == other._priority and self._action == other._action
 
 
 class DBTaskRunner(object):
-    '''
+    """
     Encapsulate the model related logic in here, in case
     we want to support different queues in the future
-    '''
+    """
 
     def __init__(self):
         self.worker_name = str(os.getpid())
@@ -276,7 +350,6 @@ class TaskProxy(object):
         self.queue = queue
         self.remove_existing_tasks = remove_existing_tasks
 
-
     def __call__(self, *args, **kwargs):
         schedule = kwargs.pop('schedule', None)
         schedule = TaskSchedule.create(schedule).merge(self.schedule)
@@ -288,7 +361,7 @@ class TaskProxy(object):
         creator = kwargs.pop('creator', None)
         repeat = kwargs.pop('repeat', None)
         repeat_until = kwargs.pop('repeat_until', None)
-        remove_existing_tasks =  kwargs.pop('remove_existing_tasks', self.remove_existing_tasks)
+        remove_existing_tasks = kwargs.pop('remove_existing_tasks', self.remove_existing_tasks)
 
         return self.runner.schedule(self.name, args, kwargs, run_at, priority,
                                     action, queue, verbose_name, creator,
@@ -297,6 +370,7 @@ class TaskProxy(object):
 
     def __str__(self):
         return 'TaskProxy(%s)' % self.name
+
 
 tasks = Tasks()
 

@@ -6,7 +6,7 @@ from django.contrib.contenttypes.models import ContentType
 
 from django.db import models
 from django.utils import timezone
-from django.utils.six import python_2_unicode_compatible
+from six import python_2_unicode_compatible
 
 from background_task.models import Task
 
@@ -104,7 +104,7 @@ class CompletedTask(models.Model):
                 # won't kill the process. kill is a bad named system call
                 os.kill(int(self.locked_by), 0)
                 return True
-            except:
+            except Exception:
                 return False
         else:
             return None

@@ -33,6 +33,11 @@ class AppSettings(object):
         return self.MAX_RUN_TIME
 
     @property
+    def BACKGROUND_ASYNC_POOL_TYPE(self):
+        """Choose between ThreadPool (thread) or ProcessPoolExecutor (process)."""
+        return getattr(settings, 'BACKGROUND_ASYNC_POOL_TYPE', 'thread')
+
+    @property
     def BACKGROUND_TASK_RUN_ASYNC(self):
         """Control if tasks will run asynchronous in a ThreadPool."""
         return getattr(settings, 'BACKGROUND_TASK_RUN_ASYNC', False)
@@ -49,7 +54,8 @@ class AppSettings(object):
         Choose either `DESC` or `ASC`.
 
         https://en.m.wikipedia.org/wiki/Nice_(Unix)
-        A niceness of −20 is the highest priority and 19 is the lowest priority. The default niceness for processes is inherited from its parent process and is usually 0.
+        A niceness of −20 is the highest priority and 19 is the lowest priority.
+        The default niceness for processes is inherited from its parent process and is usually 0.
         """
         order = getattr(settings, 'BACKGROUND_TASK_PRIORITY_ORDERING', 'DESC')
         if order == 'ASC':
@@ -57,5 +63,6 @@ class AppSettings(object):
         else:
             prefix = '-'
         return prefix
+
 
 app_settings = AppSettings()

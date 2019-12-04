@@ -12,7 +12,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
-from django.utils.six import python_2_unicode_compatible
+from six import python_2_unicode_compatible
 
 from background_task.exceptions import InvalidTaskError
 from background_task.settings import app_settings
@@ -56,8 +56,7 @@ class TaskManager(models.Manager):
         if app_settings.BACKGROUND_TASK_RUN_ASYNC:
             currently_failed = self.failed().count()
             currently_locked = self.locked(now).count()
-            count = app_settings.BACKGROUND_TASK_ASYNC_THREADS - \
-                                    (currently_locked - currently_failed)
+            count = app_settings.BACKGROUND_TASK_ASYNC_THREADS - (currently_locked - currently_failed)
             if count > 0:
                 ready = ready[:count]
             else:
@@ -197,7 +196,7 @@ class Task(models.Model):
                 # won't kill the process. kill is a bad named system call
                 os.kill(int(self.locked_by), 0)
                 return True
-            except:
+            except Exception:
                 return False
         else:
             return None
@@ -256,8 +255,7 @@ class Task(models.Model):
         else:
             backoff = timedelta(seconds=(self.attempts ** 4) + 5)
             self.run_at = timezone.now() + backoff
-            logger.warning('Rescheduling task %s for %s later at %s', self,
-                backoff, self.run_at)
+            logger.warning('Rescheduling task %s for %s later at %s', self, backoff, self.run_at)
             task_rescheduled.send(sender=self.__class__, task=self)
             self.locked_by = None
             self.locked_at = None
