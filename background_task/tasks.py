@@ -4,7 +4,6 @@ from __future__ import unicode_literals
 from datetime import datetime, timedelta
 from importlib import import_module
 from multiprocessing.pool import ThreadPool
-from concurrent.futures import ProcessPoolExecutor
 import logging
 import os
 import sys
@@ -75,7 +74,6 @@ def process_runner(task):
         args, kwargs = task.params()
         if func is None:
             raise BackgroundTaskError("Function is None, can't execute!")
-        logger.info('*** Running process_runner {} {} {}'.format(func, args, kwargs))
         func(*args, **kwargs)
 
         # task done, so can delete it
@@ -115,7 +113,7 @@ class ThreadPoolRunner:
 
 
 class ProcessPoolRunner:
-    def __init__(self, num_processes):
+    def __init__(self, _bg_runner, num_processes):
         self._num_processes = num_processes
 
     _pool_instance = None
@@ -123,37 +121,23 @@ class ProcessPoolRunner:
     @property
     def _pool(self):
         if not self._pool_instance:
-            self._pool_instance = ProcessPoolExecutor(max_workers=self._num_processes)
+            from pebble import ProcessPool
+            self._pool_instance = ProcessPool(max_workers=self._num_processes, max_tasks=app_settings.BACKGROUND_PROCESS_POOL_MAX_TASKS)
         return self._pool_instance
 
     def run(self, proxy_task, task=None, *args, **kwargs):
-        self._pool.submit(process_runner, task)
+        self._pool.schedule(process_runner, args=[task])
 
     __call__ = run
 
 
-class ASyncPoolRunnerFactory(object):
-    @staticmethod
-    def get_factory(runner_type):
-        if runner_type == 'process':
-            return ProcessPoolFactory()
-        elif runner_type == 'thread':
-            return ThreadPoolFactory()
-        else:
-            return ThreadPoolFactory()
-
-    def create_runner(self, bg_runner, num_processes):
-        raise NotImplementedError()
-
-
-class ThreadPoolFactory(ASyncPoolRunnerFactory):
-    def create_runner(self, bg_runner, num_processes):
-        return ThreadPoolRunner(bg_runner, num_processes)
-
-
-class ProcessPoolFactory(ASyncPoolRunnerFactory):
-    def create_runner(self, bg_runner, num_processes):
-        return ProcessPoolRunner(num_processes)
+def get_ASyncPoolRunner(runner_type):
+    if runner_type == 'process':
+        return ProcessPoolRunner
+    elif runner_type == 'thread':
+        return ThreadPoolRunner
+    else:
+        return ThreadPoolRunner
 
 
 class Tasks(object):
@@ -162,8 +146,8 @@ class Tasks(object):
         self._runner = DBTaskRunner()
         self._task_proxy_class = TaskProxy
         self._bg_runner = bg_runner
-        pool_factory = ASyncPoolRunnerFactory.get_factory(app_settings.BACKGROUND_ASYNC_POOL_TYPE)
-        self._pool_runner = pool_factory.create_runner(bg_runner, app_settings.BACKGROUND_TASK_ASYNC_THREADS)
+        ASyncPoolRunner = get_ASyncPoolRunner(app_settings.BACKGROUND_ASYNC_POOL_TYPE)
+        self._pool_runner = ASyncPoolRunner(bg_runner, app_settings.BACKGROUND_TASK_ASYNC_THREADS)
 
     def background(self, name=None, schedule=None, queue=None,
                    remove_existing_tasks=False):

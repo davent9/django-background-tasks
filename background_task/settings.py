@@ -10,8 +10,6 @@ except Exception:
 
 
 class AppSettings(object):
-    """
-    """
     @property
     def MAX_ATTEMPTS(self):
         """Control how many times a task will be attempted."""
@@ -36,6 +34,14 @@ class AppSettings(object):
     def BACKGROUND_ASYNC_POOL_TYPE(self):
         """Choose between ThreadPool (thread) or ProcessPoolExecutor (process)."""
         return getattr(settings, 'BACKGROUND_ASYNC_POOL_TYPE', 'thread')
+
+    @property
+    def BACKGROUND_PROCESS_POOL_MAX_TASKS(self):
+        """
+        *** ONLY IF BACKGROUND_ASYNC_POOL_TYPE = 'process' ***
+        If BACKGROUND_PROCESS_POOL_MAX_TASKS is a number greater than zero, each worker will be restarted after performing an equal amount of tasks.
+        """
+        return getattr(settings, 'BACKGROUND_PROCESS_POOL_MAX_TASKS', 0)
 
     @property
     def BACKGROUND_TASK_RUN_ASYNC(self):
